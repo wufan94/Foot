@@ -9,10 +9,31 @@ import logging
 class FootModel:
     def __init__(self, file_path):
         """加载足部模型"""
-        self.model = trimesh.load(file_path)
-        self.vertices = self.model.vertices
-        self.faces = self.model.faces
-        self.vertex_normals = self.model.vertex_normals
+        # 创建VTK读取器
+        reader = vtk.vtkVRMLImporter()
+        reader.SetFileName(file_path)
+        reader.Read()
+        
+        # 获取模型数据
+        actors = reader.GetRenderer().GetActors()
+        actors.InitTraversal()
+        actor = actors.GetNextActor()
+        
+        # 获取PolyData
+        self.model = actor.GetMapper().GetInput()
+        
+        # 获取顶点和面片数据
+        self.vertices = numpy_support.vtk_to_numpy(self.model.GetPoints().GetData())
+        faces = numpy_support.vtk_to_numpy(self.model.GetPolys().GetData())
+        self.faces = faces.reshape(-1, 4)[:, 1:4]  # 跳过第一个元素（面片顶点数）
+        
+        # 计算法向量
+        normal_generator = vtk.vtkPolyDataNormals()
+        normal_generator.SetInputData(self.model)
+        normal_generator.ComputePointNormalsOn()
+        normal_generator.ComputeCellNormalsOn()
+        normal_generator.Update()
+        self.vertex_normals = numpy_support.vtk_to_numpy(normal_generator.GetOutput().GetPointData().GetNormals())
 
 class ShoeLast:
     def __init__(self):
@@ -26,57 +47,62 @@ class ShoeLast:
         
         # 材质名称映射（确保与OBJ文件中的材质名称对应）
         self.material_mapping = {
-            '鞋舌': '鞋舌',  # E=10.0 MPa, v=0.3
-            '鞋面': '鞋面',  # E=1500.0 MPa, v=0.42
-            '鞋尖': '鞋尖',  # E=20.0 MPa, v=0.3
-            '鞋跟': '后跟',  # 将"鞋跟"映射到"后跟"
-            '后跟': '后跟',  # E=100.0 MPa, v=0.3
-            '鞋底': '鞋底'   # E=50.0 MPa, v=0.45
+            '鞋舌上部': 'tongue_upper',
+            '鞋舌下部': 'tongue_lower',
+            '鞋尖': 'toe',
+            '鞋面': 'upper',
+            '后跟': 'heel',  # 将"后跟上部"改为"后跟"
+            '鞋底': 'sole'
         }
         
         # 默认材质属性
         self.default_properties = {
-            '鞋舌': {'E': 10.0, 'v': 0.3},
-            '鞋面': {'E': 1500.0, 'v': 0.42},
-            '鞋尖': {'E': 20.0, 'v': 0.3},
-            '后跟': {'E': 100.0, 'v': 0.3},
-            '鞋底': {'E': 50.0, 'v': 0.45}
+            'tongue_upper': {'E': 10.0, 'v': 0.3},
+            'tongue_lower': {'E': 10.0, 'v': 0.3},
+            'toe': {'E': 20.0, 'v': 0.3},
+            'upper': {'E': 1500.0, 'v': 0.42},
+            'heel': {'E': 100.0, 'v': 0.3},  # 将"后跟上部"改为"后跟"
+            'sole': {'E': 50.0, 'v': 0.45}
         }
     
     def load_model(self, file_path):
         """加载鞋楦模型"""
         try:
             print("加载鞋楦模型...")
-            shoe_scene = trimesh.load(file_path, encoding='utf-8', process=False)
+            # 直接加载OBJ文件
+            mesh = trimesh.load(file_path, encoding='utf-8', process=False)
             
-            if isinstance(shoe_scene, trimesh.Scene):
-                meshes = []
-                materials = []
-                material_groups = {}  # 创建材质组字典
-                vertex_offset = 0     # 用于追踪顶点索引偏移
+            if isinstance(mesh, trimesh.Trimesh):
+                # 如果是单个网格，直接使用
+                self.model = mesh
+                self.vertices = np.array(mesh.vertices, dtype=np.float64)
+                self.faces = np.array(mesh.faces, dtype=np.int32)
+                self.vertex_normals = np.array(mesh.vertex_normals, dtype=np.float64)
                 
-                print("\n检测到的材质分组：")
-                for name, geometry in shoe_scene.geometry.items():
-                    print(f"  - {name}")
+                # 默认所有顶点使用同一个材质
+                self.vertex_materials = ['upper'] * len(self.vertices)
+                
+                print(f"\n模型加载完成:")
+                print(f"  - 顶点数量: {len(self.vertices)}")
+                print(f"  - 面片数量: {len(self.faces)}")
+                
+                # 设置默认材质属性
+                for material, properties in self.default_properties.items():
+                    self.set_material_property(material, 
+                                            properties['E'],
+                                            properties['v'])
+                
+                return True
+                
+            elif isinstance(mesh, trimesh.Scene):
+                # 如果是场景（包含多个网格），合并所有网格
+                meshes = []
+                for geometry in mesh.geometry.values():
                     if isinstance(geometry, trimesh.Trimesh):
                         meshes.append(geometry)
-                        
-                        # 直接从几何体名称中获取材质
-                        material_name = name.split('_')[0]
-                        if material_name in self.material_mapping:
-                            standard_material = self.material_mapping[material_name]
-                        else:
-                            print(f"警告：未识别的材质名称 '{material_name}'")
-                            standard_material = '鞋面'  # 默认材质
-                        
-                        # 记录该材质组的顶点索引
-                        vertex_indices = list(range(vertex_offset, vertex_offset + len(geometry.vertices)))
-                        material_groups[name] = vertex_indices
-                        vertex_offset += len(geometry.vertices)
-                        
-                        materials.extend([standard_material] * len(geometry.vertices))
-                        print(f"    材质: {standard_material}")
-                        print(f"    顶点数: {len(geometry.vertices)}")
+                
+                if not meshes:
+                    raise ValueError("场景中没有有效的网格")
                 
                 # 合并所有网格
                 self.model = trimesh.util.concatenate(meshes)
@@ -86,18 +112,12 @@ class ShoeLast:
                 self.faces = np.array(self.model.faces, dtype=np.int32)
                 self.vertex_normals = np.array(self.model.vertex_normals, dtype=np.float64)
                 
-                # 为每个顶点分配材质
-                self.vertex_materials = ['default'] * len(self.vertices)
-                for group_name, indices in material_groups.items():
-                    material = group_name.split('_')[0]  # 去除后缀
-                    if material in self.material_mapping:
-                        material = self.material_mapping[material]  # 使用标准材质名称
-                    for idx in indices:
-                        self.vertex_materials[idx] = material
+                # 默认所有顶点使用同一个材质
+                self.vertex_materials = ['upper'] * len(self.vertices)
                 
-                # 修复法向量
-                print("修复法向量...")
-                self.model.fix_normals()
+                print(f"\n模型加载完成:")
+                print(f"  - 顶点数量: {len(self.vertices)}")
+                print(f"  - 面片数量: {len(self.faces)}")
                 
                 # 设置默认材质属性
                 for material, properties in self.default_properties.items():
@@ -105,26 +125,10 @@ class ShoeLast:
                                             properties['E'],
                                             properties['v'])
                 
-                print("\n材质分区统计：")
-                unique_materials, counts = np.unique(self.vertex_materials, 
-                                                   return_counts=True)
-                for mat, count in zip(unique_materials, counts):
-                    print(f"  - {mat}: {count} 个顶点")
-                
-                print(f"\n模型加载完成:")
-                print(f"  - 顶点数量: {len(self.vertices)}")
-                print(f"  - 面片数量: {len(self.faces)}")
-                
-                # 验证数据
-                if len(self.vertices) == 0 or len(self.faces) == 0:
-                    raise ValueError("模型数据为空")
-                if self.vertices.shape[1] != 3:
-                    raise ValueError(f"顶点数据维度错误: {self.vertices.shape}")
-                    
                 return True
                 
             else:
-                raise ValueError("无法从OBJ文件中提取材质信息")
+                raise ValueError(f"不支持的模型类型: {type(mesh)}")
                 
         except Exception as e:
             print(f"加载鞋楦模型时出错: {str(e)}")
