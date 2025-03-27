@@ -123,17 +123,13 @@ def fit_curve(x, y):
         pcov: 参数协方差
         equation: 拟合方程
     """
-    # 定义拟合函数（使用多项式函数）
-    def func(x, a, b, c, d, e):
-        return a * x**4 + b * x**3 + c * x**2 + d * x + e
-    
-    # 进行曲线拟合
-    popt, pcov = curve_fit(func, x, y)
+    # 使用四次多项式拟合
+    popt = np.polyfit(x, y, 4)
     
     # 生成拟合方程
     equation = f"F = {popt[0]:.4f}x⁴ + {popt[1]:.4f}x³ + {popt[2]:.4f}x² + {popt[3]:.4f}x + {popt[4]:.4f}"
     
-    return popt, pcov, equation
+    return popt, None, equation
 
 def calculate_variability(data_list):
     """计算三次测试的变异系数
@@ -188,12 +184,8 @@ def calculate_fit_accuracy(x, y, popt):
         r_squared: R²值
         rmse: 均方根误差
     """
-    # 定义拟合函数
-    def func(x, a, b, c, d, e):
-        return a * x**4 + b * x**3 + c * x**2 + d * x + e
-    
     # 计算拟合值
-    y_fit = func(x, *popt)
+    y_fit = np.polyval(popt, x)
     
     # 计算R²值
     residuals = y - y_fit
@@ -330,43 +322,60 @@ def plot_fitted_curves(data_dict):
         # 创建子图
         ax = plt.subplot(n_rows, n_cols, i + 1)
         
-        # 计算平均曲线
-        displacements = np.unique(np.concatenate([df['displacement'] for df in data_list]))
-        forces = []
+        # 收集所有数据点
+        all_displacements = []
+        all_forces = []
+        for df in data_list:
+            all_displacements.extend(df['displacement'].values)
+            all_forces.extend(df['force'].values)
         
-        for disp in displacements:
-            force_values = []
-            for df in data_list:
-                idx = np.abs(df['displacement'] - disp).argmin()
-                force_values.append(df['force'].iloc[idx])
-            forces.append(np.mean(force_values))
+        # 转换为numpy数组并排序
+        all_data = np.array(list(zip(all_displacements, all_forces)))
+        sorted_data = all_data[all_data[:, 0].argsort()]
+        
+        # 打印原始数据点
+        print(f"\n试样 {sample_number} 的部分数据点:")
+        for j in range(min(10, len(sorted_data))):
+            print(f"位移: {sorted_data[j,0]:.2f}mm, 力值: {sorted_data[j,1]:.2f}N")
         
         # 拟合曲线
-        popt, pcov, equation = fit_curve(displacements, forces)
+        popt, _, equation = fit_curve(sorted_data[:, 0], sorted_data[:, 1])
         
         # 计算拟合精度
-        r_squared, rmse = calculate_fit_accuracy(displacements, forces, popt)
+        r_squared, rmse = calculate_fit_accuracy(sorted_data[:, 0], sorted_data[:, 1], popt)
         quality = evaluate_fit_quality(r_squared)
         
+        print(f"\n试样 {sample_number} 拟合结果:")
+        print(f"拟合方程: {equation}")
+        print(f"R² = {r_squared:.4f}, RMSE = {rmse:.2f}, 质量: {quality}")
+        
+        # 验证几个具体点的拟合值
+        test_points = [5.0, 10.0, 15.0]
+        print("\n验证拟合结果:")
+        for x in test_points:
+            y_fit = np.polyval(popt, x)
+            print(f"位移 {x}mm: 力值 = {y_fit:.2f}N")
+        
+        # 绘制原始数据点
+        ax.scatter(sorted_data[:, 0], sorted_data[:, 1], 
+                  color='red', s=10, alpha=0.5, label='测试数据')
+        
         # 绘制拟合曲线
-        ax.plot(displacements, forces, 
-                color='blue', 
-                label=f'Fitted Curve\n{equation}\nR² = {r_squared:.4f} ({quality})\nRMSE = {rmse:.2f}',
-                linewidth=2)
+        x_fit = np.linspace(0, max(sorted_data[:, 0]), 200)
+        y_fit = np.polyval(popt, x_fit)
+        ax.plot(x_fit, y_fit, 'b-', linewidth=2,
+               label=f'拟合曲线\n{equation}\nR² = {r_squared:.4f}')
         
         # 设置子图属性
-        ax.set_title(f'Sample {sample_number}', fontsize=12)
-        ax.set_xlabel('Displacement (mm)', fontsize=10)
-        ax.set_ylabel('Force (N)', fontsize=10)
+        ax.set_title(f'试样 {sample_number}', fontsize=12)
+        ax.set_xlabel('位移 (mm)', fontsize=10)
+        ax.set_ylabel('力值 (N)', fontsize=10)
         ax.grid(True, linestyle='--', alpha=0.7)
         ax.legend(fontsize=8)
         
         # 设置坐标轴范围
-        ax.set_xlim(min(displacements), max(displacements))
-        ax.set_ylim(0, max(forces) * 1.1)  # 留出10%的空间
-        
-        # 打印拟合质量信息
-        print(f"Sample {sample_number} - R² = {r_squared:.4f}, Quality: {quality}")
+        ax.set_xlim(0, max(sorted_data[:, 0]))
+        ax.set_ylim(0, max(sorted_data[:, 1]) * 1.1)
     
     # 调整子图之间的间距
     plt.tight_layout()
@@ -398,22 +407,22 @@ def generate_report(data_dict, base_path):
             f.write(f"变异系数 (CV): {cv:.2f}%\n")
             f.write(f"稳定性评估: {stability}\n\n")
             
-            # 计算平均曲线
-            displacements = np.unique(np.concatenate([df['displacement'] for df in data_list]))
-            forces = []
+            # 收集所有数据点
+            all_displacements = []
+            all_forces = []
+            for df in data_list:
+                all_displacements.extend(df['displacement'].values)
+                all_forces.extend(df['force'].values)
             
-            for disp in displacements:
-                force_values = []
-                for df in data_list:
-                    idx = np.abs(df['displacement'] - disp).argmin()
-                    force_values.append(df['force'].iloc[idx])
-                forces.append(np.mean(force_values))
+            # 转换为numpy数组并排序
+            all_data = np.array(list(zip(all_displacements, all_forces)))
+            sorted_data = all_data[all_data[:, 0].argsort()]
             
             # 拟合曲线
-            popt, pcov, equation = fit_curve(displacements, forces)
+            popt, _, equation = fit_curve(sorted_data[:, 0], sorted_data[:, 1])
             
             # 计算拟合精度
-            r_squared, rmse = calculate_fit_accuracy(displacements, forces, popt)
+            r_squared, rmse = calculate_fit_accuracy(sorted_data[:, 0], sorted_data[:, 1], popt)
             quality = evaluate_fit_quality(r_squared)
             
             # 写入拟合信息

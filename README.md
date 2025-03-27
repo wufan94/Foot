@@ -118,7 +118,7 @@
 5. 确保鞋内腔模型中的顶点组名称与系统配置匹配
 
 ## 开发团队
-- 开发单位：吴凡
+- 开发单位：Fan
 - 联系方式：wufanspecial@outlook.com
 
 ## 版本历史
@@ -252,37 +252,142 @@ python test_display.py
 每个试样对应的材料拟合方程如下：
 
 ### 试样1 - 鞋面
-F = 0.0001x⁴ - 0.0022x³ + 0.0157x² + 0.1234x + 0.0123
-- R² = 0.9983
-- RMSE = 0.0234
+F = -0.0089x⁴ + 0.4375x³ - 3.0884x² + 8.2764x - 3.3784
+- R² = 0.9992
+- RMSE = 8.35
+- 变异系数 (CV): 10.94%
+- 稳定性评估: Fair
 
 ### 试样2 - 鞋尖
-F = 0.0002x⁴ - 0.0034x³ + 0.0189x² + 0.1456x + 0.0156
-- R² = 0.9998
-- RMSE = 0.0156
+F = -0.0122x⁴ + 0.4174x³ + 1.9400x² - 11.9956x + 8.7726
+- R² = 0.9970
+- RMSE = 38.57
+- 变异系数 (CV): 6.47%
+- 稳定性评估: Good
+
+### 试样3
+F = -0.0123x⁴ + 0.4421x³ - 2.0785x² + 1.8870x + 1.0934
+- R² = 0.9944
+- RMSE = 18.85
+- 变异系数 (CV): 15.26%
+- 稳定性评估: Poor
 
 ### 试样4 - 鞋舌下部
-F = 0.0003x⁴ - 0.0045x³ + 0.0223x² + 0.1678x + 0.0189
-- R² = 0.9997
-- RMSE = 0.0178
+F = -0.0107x⁴ + 0.4648x³ - 1.5420x² - 2.8860x + 5.6783
+- R² = 0.9991
+- RMSE = 14.09
+- 变异系数 (CV): 4.20%
+- 稳定性评估: Excellent
 
 ### 试样5 - 后跟上部
-F = 0.0004x⁴ - 0.0056x³ + 0.0256x² + 0.1890x + 0.0212
-- R² = 0.9997
-- RMSE = 0.0190
+F = -0.0067x⁴ + 0.4720x³ - 6.3526x² + 27.9414x - 20.6310
+- R² = 0.9972
+- RMSE = 34.59
+- 变异系数 (CV): 4.61%
+- 稳定性评估: Excellent
 
 ### 试样6 - 后跟下部
-F = 0.0005x⁴ - 0.0067x³ + 0.0289x² + 0.2102x + 0.0234
-- R² = 0.9998
-- RMSE = 0.0167
+F = -0.0140x⁴ + 0.5468x³ - 0.9791x² - 5.9761x + 8.0921
+- R² = 0.9978
+- RMSE = 31.73
+- 变异系数 (CV): 4.11%
+- 稳定性评估: Excellent
 
 ### 试样7 - 鞋舌上部
-F = 0.0006x⁴ - 0.0078x³ + 0.0322x² + 0.2314x + 0.0256
-- R² = 0.9996
-- RMSE = 0.0201
+F = -0.0084x⁴ + 0.4342x³ - 3.7214x² + 8.8407x - 1.5163
+- R² = 0.9985
+- RMSE = 17.84
+- 变异系数 (CV): 9.29%
+- 稳定性评估: Good
 
 注：
 1. 所有方程中F为力值（N），x为位移值（mm）
-2. 试样3暂时不考虑
+2. 试样3的数据稳定性较差（CV > 15%），建议谨慎使用
 3. 所有拟合方程的R²值均大于0.99，表明拟合效果优秀
-4. 这些方程可以直接在适配程序中调用，用于计算不同位移下的力值 
+4. 这些方程可以直接在适配程序中调用，用于计算不同位移下的力值
+5. 变异系数（CV）反映了测试数据的离散程度，CV越小表示数据稳定性越好
+
+## 偏差分析功能更新说明
+
+### 新增功能：鼠标悬停显示偏差值
+在偏差分析模块中，新增了鼠标悬停实时显示局部偏差值的功能。具体实现方法如下：
+
+```python
+# 1. 创建文本显示器
+text_actor = vtk.vtkTextActor()
+text_actor.GetTextProperty().SetFontSize(14)
+text_actor.GetTextProperty().SetBold(True)
+text_actor.GetTextProperty().SetColor(0, 0, 0)  # 黑色文字
+text_actor.SetPosition(10, 10)
+renderer.AddActor2D(text_actor)
+
+# 2. 创建拾取器
+picker = vtk.vtkCellPicker()
+picker.SetTolerance(0.001)
+
+# 3. 创建鼠标移动回调函数
+def mouse_move_callback(obj, event):
+    try:
+        # 获取鼠标位置
+        x, y = obj.GetEventPosition()
+        
+        # 拾取点
+        picker.Pick(x, y, 0, renderer)
+        
+        if picker.GetCellId() != -1:
+            # 获取拾取的面片
+            cell_id = picker.GetCellId()
+            cell = polydata.GetCell(cell_id)
+            
+            # 获取面片顶点的距离值
+            point_ids = [cell.GetPointId(i) for i in range(3)]
+            point_distances = [distance_data.GetValue(pid) for pid in point_ids]
+            
+            # 计算平均距离值
+            distance_value = np.mean(point_distances)
+            
+            # 显示距离值
+            if not np.isnan(distance_value):
+                text_actor.SetInput(f"距离值: {distance_value:.2f} mm")
+            else:
+                text_actor.SetInput("距离值: N/A")
+        else:
+            text_actor.SetInput("")
+        
+        renderer.GetRenderWindow().Render()
+        
+    except Exception as e:
+        print(f"鼠标回调函数出错: {str(e)}")
+        text_actor.SetInput("")
+        renderer.GetRenderWindow().Render()
+
+# 4. 添加事件观察者
+interactor.AddObserver("MouseMoveEvent", mouse_move_callback)
+```
+
+### 功能特点
+1. 实时显示：
+   - 鼠标移动到模型表面时实时显示当前位置的偏差值
+   - 显示值为当前面片三个顶点的平均偏差值
+   - 数值精确到小数点后两位
+
+2. 显示位置：
+   - 偏差值显示在窗口左上角
+   - 使用黑色粗体字体，清晰易读
+   - 当鼠标移出模型表面时自动隐藏
+
+3. 错误处理：
+   - 对无效区域显示"N/A"
+   - 包含完整的异常处理机制
+   - 出错时不影响程序继续运行
+
+### 使用说明
+1. 在显示偏差云图时，直接将鼠标移动到感兴趣的区域
+2. 窗口左上角会实时显示该位置的偏差值
+3. 正值表示间隙，负值表示干涉
+4. 超出有效范围的区域会显示"N/A"
+
+### 注意事项
+1. 显示的偏差值是面片三个顶点的平均值
+2. 对于网格密度较低的区域，显示值可能存在一定误差
+3. 确保模型加载正确且计算完成后再使用此功能 
