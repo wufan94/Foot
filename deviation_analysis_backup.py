@@ -130,7 +130,7 @@ def compute_interference(foot_model, shoe_model):
             distances[vertex_idx] = total_distance / total_weight
     
     # 将超出范围的距离设置为NaN
-    distances[distances > 25.0] = np.nan  # 大于25mm的设为NaN
+    distances[distances > 15.0] = np.nan  # 大于25mm的设为NaN
     distances[distances < -10.0] = np.nan  # 删除小于-10mm的区域
     
     # 打印统计信息
@@ -381,7 +381,7 @@ def simplify_to_target_density(mesh, target_density):
         print("返回原始模型")
         return mesh
 
-def compute_distances(shoe_mesh, foot_mesh, max_angle=90):
+def compute_distances(shoe_mesh, foot_mesh, max_angle=40):
     """计算从鞋内腔到足部模型的距离
     Args:
         shoe_mesh: 简化后的鞋内腔模型
@@ -408,7 +408,7 @@ def compute_distances(shoe_mesh, foot_mesh, max_angle=90):
     
     # 设置参数
     max_angle_rad = np.radians(max_angle)
-    max_distance = 25.0  # 最大距离阈值(mm)
+    max_distance = 15.0  # 最大距离阈值(mm)  设置这里可以去除一些非常强的干涉
     
     # 对每个足部模型面进行处理
     positive_distances = []  # 用于收集正的距离值
@@ -430,6 +430,14 @@ def compute_distances(shoe_mesh, foot_mesh, max_angle=90):
             continue
             
         direction = direction / direction_norm
+        
+        # 计算法向量夹角
+        shoe_normal = shoe_face_normals[idx]
+        angle = np.arccos(np.abs(np.dot(normal, shoe_normal)))
+        
+        # 如果夹角超过阈值，跳过这个点
+        if angle > max_angle_rad:
+            continue
         
         # 计算有符号距离
         signed_dist = dist
@@ -465,14 +473,14 @@ def compute_distances(shoe_mesh, foot_mesh, max_angle=90):
     return distances, valid_mask
 
 def convert_distance_to_pressure(distance, material_type):
-    """根据不同材质的拟合方程将干涉距离转换为压力值
+    """根据不同材质的拟合方程将干涉距离转换为力值
     Args:
         distance: 干涉距离（mm，正值表示压缩）
         material_type: 材质类型（'试样1', '试样2', '试样4', '后跟上部', '无限伸缩', '鞋底'）
     Returns:
-        pressure: 压力值（kPa）
+        force: 力值（N）
     """
-    if distance <= 0:  # 没有压缩，压力为0
+    if distance <= 0:  # 没有压缩，力为0
         return 0.0
     
     # 正的干涉距离就是压缩量
@@ -504,15 +512,7 @@ def convert_distance_to_pressure(distance, material_type):
     
     force = max(0.0, force)  # 确保力值不为负值
     
-    # 计算接触面积（mm²）
-    # 使用钢球的投影面积（直径为25mm）
-    contact_area = np.pi * (25/2)**2  # 约490.87 mm²
-    
-    # 转换为压力值 (kPa)
-    # 1 N/mm² = 1 MPa = 1000 kPa
-    pressure = force / contact_area * 1000
-    
-    return pressure
+    return force
 
 def get_material_type(group_name):
     """根据组名确定材质类型
@@ -621,6 +621,24 @@ def display_model_with_distances_and_pressure(model, distances, valid_mask, rend
     renderer2.SetBackground(1, 1, 1)
     renderer.GetRenderWindow().AddRenderer(renderer2)
     
+    # 添加标题文本（左侧视图）
+    title_text1 = vtk.vtkTextActor()
+    title_text1.SetInput("Distance Map / 距离云图")
+    title_text1.GetTextProperty().SetFontSize(24)
+    title_text1.GetTextProperty().SetBold(True)
+    title_text1.GetTextProperty().SetColor(0, 0, 0)
+    title_text1.SetPosition(20, 550)
+    renderer.AddActor2D(title_text1)
+    
+    # 添加标题文本（右侧视图）
+    title_text2 = vtk.vtkTextActor()
+    title_text2.SetInput("Force Map / 力值云图")
+    title_text2.GetTextProperty().SetFontSize(24)
+    title_text2.GetTextProperty().SetBold(True)
+    title_text2.GetTextProperty().SetColor(0, 0, 0)
+    title_text2.SetPosition(20, 550)
+    renderer2.AddActor2D(title_text2)
+    
     # 创建基础几何数据
     points = vtk.vtkPoints()
     for vertex in model.vertices:
@@ -689,6 +707,7 @@ def display_model_with_distances_and_pressure(model, distances, valid_mask, rend
             
             # 计算力值
             force = convert_distance_to_pressure(dist, material_type)
+            
             face_material_stats.append({
                 'face_idx': face_idx,
                 'distance': dist,
@@ -862,7 +881,7 @@ def display_model_with_distances_and_pressure(model, distances, valid_mask, rend
     
     force_scalar_bar = vtk.vtkScalarBarActor()
     force_scalar_bar.SetLookupTable(force_mapper.GetLookupTable())
-    force_scalar_bar.SetTitle("压力值 (kPa)")
+    force_scalar_bar.SetTitle("压力值 (N)")
     force_scalar_bar.SetWidth(0.08)
     force_scalar_bar.SetHeight(0.6)
     force_scalar_bar.SetPosition(0.92, 0.2)
@@ -879,14 +898,14 @@ def display_model_with_distances_and_pressure(model, distances, valid_mask, rend
     
     # 创建文本actor用于显示距离和力值
     text_actor = vtk.vtkTextActor()
-    text_actor.GetTextProperty().SetFontSize(14)
+    text_actor.GetTextProperty().SetFontSize(20)
     text_actor.GetTextProperty().SetBold(True)
     text_actor.GetTextProperty().SetColor(0, 0, 0)
     text_actor.SetPosition(10, 10)
     renderer.AddActor2D(text_actor)
     
     force_text_actor = vtk.vtkTextActor()
-    force_text_actor.GetTextProperty().SetFontSize(14)
+    force_text_actor.GetTextProperty().SetFontSize(20)
     force_text_actor.GetTextProperty().SetBold(True)
     force_text_actor.GetTextProperty().SetColor(0, 0, 0)
     force_text_actor.SetPosition(10, 10)
@@ -899,7 +918,7 @@ def display_model_with_distances_and_pressure(model, distances, valid_mask, rend
     force_picker = vtk.vtkCellPicker()
     force_picker.SetTolerance(0.001)
     
-    # 创建交互器回调函数
+    # 创建鼠标移动回调函数
     def mouse_move_callback(obj, event):
         try:
             x, y = obj.GetEventPosition()
@@ -918,9 +937,9 @@ def display_model_with_distances_and_pressure(model, distances, valid_mask, rend
                     distance_value = np.mean(point_distances)
                     
                     if not np.isnan(distance_value):
-                        text_actor.SetInput(f"距离值: {distance_value:.2f} mm")
+                        text_actor.SetInput(f"Distance/距离值: {distance_value:.2f} mm")
                     else:
-                        text_actor.SetInput("距离值: N/A")
+                        text_actor.SetInput("Distance/距离值: N/A")
                 else:
                     text_actor.SetInput("")
                     
@@ -935,9 +954,9 @@ def display_model_with_distances_and_pressure(model, distances, valid_mask, rend
                     force_value = np.mean(point_forces)
                     
                     if not np.isnan(force_value):
-                        force_text_actor.SetInput(f"压力值: {force_value:.2f} kPa")
+                        force_text_actor.SetInput(f"Pressure/压力值: {force_value:.2f} N")
                     else:
-                        force_text_actor.SetInput("压力值: N/A")
+                        force_text_actor.SetInput("Pressure/压力值: N/A")
                 else:
                     force_text_actor.SetInput("")
             
@@ -949,7 +968,7 @@ def display_model_with_distances_and_pressure(model, distances, valid_mask, rend
             force_text_actor.SetInput("")
             renderer.GetRenderWindow().Render()
     
-    # 添加鼠标移动事件观察者
+    # 添加事件观察者
     interactor = renderer.GetRenderWindow().GetInteractor()
     interactor.AddObserver("MouseMoveEvent", mouse_move_callback)
     
